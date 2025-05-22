@@ -124,7 +124,8 @@ function handleAddIp(event) {
     const newIp = {
         location: location,
         ip: ip,
-        status: 'unknown'
+        status: 'unknown',
+        method: 'pending'
     };
     
     ipData.push(newIp);
@@ -132,12 +133,18 @@ function handleAddIp(event) {
     
     // Re-render the table and check status
     renderIpTable(ipData);
-    checkIpStatus(ip).then(status => {
+    
+    // Check the status of the new IP
+    checkIpStatus(ip).then(response => {
         const updatedItem = ipData.find(item => item.ip === ip);
         if (updatedItem) {
-            updatedItem.status = status;
+            updatedItem.status = response.status;
+            updatedItem.method = response.method;
             saveToLocalStorage();
             updateStatusDisplay(ipData);
+            
+            // Log the method used
+            console.log(`New IP ${ip} (${location}): ${response.status.toUpperCase()} [Method: ${response.method}]`);
         }
     });
     
@@ -241,13 +248,21 @@ async function updateIpStatuses() {
         const updatedData = await response.json();
         console.log('Received updated status data:', updatedData);
         
+        // Log the methods used for each IP check
+        console.group('IP Status Check Methods');
+        updatedData.forEach(item => {
+            console.log(`${item.ip} (${item.location}): ${item.status.toUpperCase()} [Method: ${item.method || 'unknown'}]`);
+        });
+        console.groupEnd();
+        
         // Merge the server data with any manually added IPs
         const updatedIps = new Map(updatedData.map(item => [item.ip, item]));
         ipData = ipData.map(item => {
             if (updatedIps.has(item.ip)) {
                 return {
                     ...item,
-                    status: updatedIps.get(item.ip).status
+                    status: updatedIps.get(item.ip).status,
+                    method: updatedIps.get(item.ip).method // Store the method for future reference
                 };
             }
             return item;
@@ -257,8 +272,10 @@ async function updateIpStatuses() {
         const customIps = ipData.filter(item => !updatedIps.has(item.ip));
         if (customIps.length > 0) {
             for (const item of customIps) {
-                const status = await checkIpStatus(item.ip);
-                item.status = status;
+                const response = await checkIpStatus(item.ip);
+                item.status = response.status;
+                item.method = response.method; // Store the method
+                console.log(`Custom IP ${item.ip}: ${item.status.toUpperCase()} [Method: ${item.method || 'unknown'}]`);
             }
         }
         
@@ -277,15 +294,23 @@ async function updateIpStatuses() {
         // If bulk endpoint fails, try individual checks
         console.log('Attempting individual IP status checks');
         const updatePromises = ipData.map(async (item) => {
-            const status = await checkIpStatus(item.ip);
+            const response = await checkIpStatus(item.ip);
             return {
                 ...item,
-                status
+                status: response.status,
+                method: response.method // Store the method
             };
         });
         
         // Wait for all status checks to complete
         const updatedData = await Promise.all(updatePromises);
+        
+        // Log individual check methods
+        console.group('Individual IP Status Check Methods');
+        updatedData.forEach(item => {
+            console.log(`${item.ip} (${item.location}): ${item.status.toUpperCase()} [Method: ${item.method || 'unknown'}]`);
+        });
+        console.groupEnd();
         
         // Update the data and save to localStorage
         ipData = updatedData;
@@ -332,15 +357,24 @@ async function checkIpStatus(ip) {
         const response = await fetch(url);
         if (response.ok) {
             const data = await response.json();
-            console.log(`IP ${ip} status: ${data.status}`);
-            return data.status;
+            console.log(`IP ${ip} status: ${data.status} [Method: ${data.method || 'unknown'}]`);
+            return {
+                status: data.status,
+                method: data.method || 'unknown'
+            };
         } else {
             console.error(`Error response from server for IP ${ip}:`, response.status);
-            return 'unknown';
+            return {
+                status: 'unknown',
+                method: 'error'
+            };
         }
     } catch (error) {
         console.error(`Error checking IP ${ip}:`, error);
-        return 'unknown';
+        return {
+            status: 'unknown',
+            method: 'error'
+        };
     }
 }
 
