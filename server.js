@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const ping = require('ping');
+const { checkStatus } = require('./ping-fallback');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -60,21 +61,32 @@ app.get('/api/status/:ip', async (req, res) => {
     const ip = req.params.ip;
     console.log(`Pinging IP: ${ip}`);
     
-    // Using ping library to do an actual ping
-    const result = await ping.promise.probe(ip, { 
-      timeout: 2,
-      extra: ['-c', '1']  // Send just 1 packet
-    });
+    let result;
+    try {
+      // Try regular ping first (works locally but not on Render)
+      result = await ping.promise.probe(ip, { 
+        timeout: 2,
+        extra: ['-c', '1']
+      });
+      console.log(`Standard ping result for ${ip}: ${result.alive ? 'online' : 'offline'}`);
+    } catch (pingError) {
+      console.log(`Standard ping failed, using fallback for ${ip}: ${pingError.message}`);
+      // If regular ping fails, use our fallback
+      const fallbackResult = await checkStatus(ip);
+      result = {
+        alive: fallbackResult.alive,
+        method: fallbackResult.method
+      };
+    }
     
-    console.log(`IP ${ip} status: ${result.alive ? 'online' : 'offline'}`);
     res.json({ 
       ip, 
       status: result.alive ? 'online' : 'offline',
-      time: result.time,
-      alive: result.alive
+      method: result.method || 'ping',
+      details: result
     });
   } catch (err) {
-    console.error(`Error pinging IP ${req.params.ip}:`, err);
+    console.error(`Error checking IP ${req.params.ip}:`, err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -85,13 +97,24 @@ app.get('/api/status-all', async (req, res) => {
     console.log('API endpoint /api/status-all called');
     
     const results = await Promise.all(ipData.map(async (item) => {
-      const result = await ping.promise.probe(item.ip, { timeout: 2 });
-      return {
-        ...item,
-        status: result.alive ? 'online' : 'offline',
-        time: result.time,
-        alive: result.alive
-      };
+      try {
+        // Try regular ping first
+        const result = await ping.promise.probe(item.ip, { timeout: 2 });
+        return {
+          ...item,
+          status: result.alive ? 'online' : 'offline',
+          method: 'ping'
+        };
+      } catch (pingError) {
+        // Fall back to alternative status checks
+        console.log(`Ping failed for ${item.ip}, using fallback`);
+        const fallbackResult = await checkStatus(item.ip);
+        return {
+          ...item,
+          status: fallbackResult.alive ? 'online' : 'offline',
+          method: fallbackResult.method
+        };
+      }
     }));
     
     res.json(results);
