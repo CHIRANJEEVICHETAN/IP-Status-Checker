@@ -9,5 +9,8 @@
   "dependencies": {
     "express": "^4.17.1",
     "ping": "^0.4.2"
+  },
+  "engines": {
+    "node": "22.x"
   }
 } 
